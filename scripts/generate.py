@@ -16,7 +16,9 @@ import pathlib
 import re
 import statistics
 import sys
+import time
 import tomllib
+import urllib.error
 import urllib.request
 from zoneinfo import ZoneInfo
 
@@ -39,8 +41,19 @@ def gql(query: str, **variables) -> dict:
         data=json.dumps({"query": query, "variables": variables}).encode(),
         headers={"Authorization": f"bearer {os.environ['GH_TOKEN']}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        body = json.load(r)
+    # GitHub's GraphQL endpoint intermittently returns 502/503/504; retry with backoff.
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                body = json.load(r)
+            break
+        except urllib.error.HTTPError as err:
+            if err.code < 500 or attempt == 4:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 4:
+                raise
+        time.sleep(2 ** attempt * 3)
     if body.get("errors"):
         raise RuntimeError(body["errors"])
     return body["data"]
